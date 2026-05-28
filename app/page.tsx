@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/client';
@@ -119,12 +120,20 @@ export default function Home() {
           <h1 className="text-xl font-bold">Nircen — İngilizce Öğretmenin</h1>
           <p className="text-sm text-blue-100 truncate">{user?.email}</p>
         </div>
-        <button
-          onClick={handleLogout}
-          className="shrink-0 text-sm bg-blue-700 hover:bg-blue-800 rounded-full px-3 py-1.5"
-        >
-          Çıkış
-        </button>
+        <div className="shrink-0 flex items-center gap-2">
+          <Link
+            href="/test"
+            className="text-sm bg-blue-700 hover:bg-blue-800 rounded-full px-3 py-1.5"
+          >
+            Test
+          </Link>
+          <button
+            onClick={handleLogout}
+            className="text-sm bg-blue-700 hover:bg-blue-800 rounded-full px-3 py-1.5"
+          >
+            Çıkış
+          </button>
+        </div>
       </header>
 
       {/* Mesajlar */}
