@@ -9,7 +9,8 @@
       "Bash(curl -s -o /dev/null -w \"GET /login -> %{http_code}\\\\n\" http://localhost:3000/login)",
       "Bash(curl -s -o /dev/null -w \"GET /auth/callback -> %{http_code}\\\\n\" http://localhost:3000/auth/callback)",
       "Bash(NODE_OPTIONS=--max-old-space-size=4096 npm run dev)",
-      "Bash(curl -s -o /dev/null -w \"GET /auth/callback -> %{http_code}\\\\n\" \"http://localhost:3000/auth/callback\")"
+      "Bash(curl -s -o /dev/null -w \"GET /auth/callback -> %{http_code}\\\\n\" \"http://localhost:3000/auth/callback\")",
+      "Bash(taskkill //PID 103712 //F)"
     ]
   }
 }

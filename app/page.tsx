@@ -18,13 +18,15 @@ export default function Home() {
   const [checkingAuth, setCheckingAuth] = useState(true);
 
   const [messages, setMessages] = useState<Message[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let active = true;
-    supabase.auth.getUser().then(({ data: { user } }) => {
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
       if (!active) return;
       if (!user) {
         router.replace('/login');
@@ -32,7 +34,26 @@ export default function Home() {
       }
       setUser(user);
       setCheckingAuth(false);
-    });
+      setLoadingHistory(true);
+      try {
+        const res = await fetch('/api/history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: user.id }),
+        });
+        if (!active) return;
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data?.messages)) {
+            setMessages(data.messages as Message[]);
+          }
+        }
+      } catch {
+        // Geçmiş yüklenemezse sessizce boş başla.
+      } finally {
+        if (active) setLoadingHistory(false);
+      }
+    })();
     return () => {
       active = false;
     };
@@ -108,7 +129,12 @@ export default function Home() {
 
       {/* Mesajlar */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {messages.length === 0 && (
+        {loadingHistory && (
+          <div className="text-center text-gray-400 mt-10">
+            Geçmiş yükleniyor...
+          </div>
+        )}
+        {!loadingHistory && messages.length === 0 && (
           <div className="text-center text-gray-400 mt-10">
             Bir şeyler yazarak başla. Örnek: &quot;I goed to school yesterday&quot;
           </div>
