@@ -1,6 +1,9 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import type { User } from '@supabase/supabase-js';
+import { createClient } from '@/lib/supabase/client';
 
 type Message = {
   role: 'user' | 'bot';
@@ -8,23 +11,43 @@ type Message = {
 };
 
 export default function Home() {
+  const router = useRouter();
+  const supabase = createClient();
+
+  const [user, setUser] = useState<User | null>(null);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Geçici kullanıcı (sonra Supabase Auth ile değişecek)
-  const userId = 'web-tekin-001';
-  const firstName = 'Tekin';
+  useEffect(() => {
+    let active = true;
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!active) return;
+      if (!user) {
+        router.replace('/login');
+        return;
+      }
+      setUser(user);
+      setCheckingAuth(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [router, supabase]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   async function sendMessage() {
-    if (!input.trim() || loading) return;
+    if (!input.trim() || loading || !user) return;
 
     const userMsg = input.trim();
+    const firstName = user.email ? user.email.split('@')[0] : 'kullanici';
+
     setInput('');
     setMessages((prev) => [...prev, { role: 'user', text: userMsg }]);
     setLoading(true);
@@ -34,7 +57,7 @@ export default function Home() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: userId,
+          user_id: user.id,
           first_name: firstName,
           message: userMsg,
         }),
@@ -43,7 +66,7 @@ export default function Home() {
       const data = await res.json();
       const reply = data.reply || 'Bir hata oluştu, tekrar dener misin?';
       setMessages((prev) => [...prev, { role: 'bot', text: reply }]);
-    } catch (error) {
+    } catch {
       setMessages((prev) => [
         ...prev,
         { role: 'bot', text: 'Bağlantı hatası. Tekrar dene.' },
@@ -53,19 +76,41 @@ export default function Home() {
     }
   }
 
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    router.replace('/login');
+    router.refresh();
+  }
+
+  if (checkingAuth) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-gray-50 text-gray-500">
+        Yükleniyor...
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen max-w-2xl mx-auto bg-gray-50">
       {/* Header */}
-      <header className="bg-blue-600 text-white p-4 shadow">
-        <h1 className="text-xl font-bold">Nircen — İngilizce Öğretmenin</h1>
-        <p className="text-sm text-blue-100">İngilizce yaz, hatalarını düzeltsin</p>
+      <header className="bg-blue-600 text-white p-4 shadow flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold">Nircen — İngilizce Öğretmenin</h1>
+          <p className="text-sm text-blue-100 truncate">{user?.email}</p>
+        </div>
+        <button
+          onClick={handleLogout}
+          className="shrink-0 text-sm bg-blue-700 hover:bg-blue-800 rounded-full px-3 py-1.5"
+        >
+          Çıkış
+        </button>
       </header>
 
       {/* Mesajlar */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.length === 0 && (
           <div className="text-center text-gray-400 mt-10">
-            Bir şeyler yazarak başla. Örnek: "I goed to school yesterday"
+            Bir şeyler yazarak başla. Örnek: &quot;I goed to school yesterday&quot;
           </div>
         )}
         {messages.map((msg, i) => (

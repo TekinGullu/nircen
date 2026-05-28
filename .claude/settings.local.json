@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rm 'C:/Users/arden/.claude/projects/C--Users-arden-nircen-web/memory/project_overview.md' 'C:/Users/arden/.claude/projects/C--Users-arden-nircen-web/memory/auth_migration.md' 'C:/Users/arden/.claude/projects/C--Users-arden-nircen-web/memory/user_language.md' 'C:/Users/arden/.claude/projects/C--Users-arden-nircen-web/memory/MEMORY.md'2)",
+      "Bash(npm run *)",
+      "Read(//c/Users/arden/**)",
+      "Bash(awk *)",
+      "Bash(curl -s -o /dev/null -w \"GET / -> %{http_code}\\\\n\" http://localhost:3000/)",
+      "Bash(curl -s -o /dev/null -w \"GET /login -> %{http_code}\\\\n\" http://localhost:3000/login)",
+      "Bash(curl -s -o /dev/null -w \"GET /auth/callback -> %{http_code}\\\\n\" http://localhost:3000/auth/callback)",
+      "Bash(NODE_OPTIONS=--max-old-space-size=4096 npm run dev)",
+      "Bash(curl -s -o /dev/null -w \"GET /auth/callback -> %{http_code}\\\\n\" \"http://localhost:3000/auth/callback\")"
+    ]
+  }
+}
