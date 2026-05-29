@@ -37,12 +37,19 @@ type ResultItem = {
   explanation_tr: string;
 };
 
+type TopicScore = { correct: number; total: number };
+
+type TopicSummary = {
+  weakest: string[];
+  by_topic: Record<string, TopicScore>;
+};
+
 type SubmitResponse = {
   test_id: number;
   score: number;
   total: number;
   results: ResultItem[];
-  topic_summary?: string;
+  topic_summary?: TopicSummary | null;
 };
 
 type Stage = 'prep' | 'solving' | 'result';
@@ -111,7 +118,13 @@ export default function TestPage() {
         }),
       });
       if (!res.ok) {
-        setErrorMsg('Test hazırlanamadı. Lütfen tekrar dene.');
+        const body = await res.json().catch(() => null);
+        const detail = body?.error
+          ? `${body.error}${body.status ? ` (${body.status})` : ''}`
+          : '';
+        setErrorMsg(
+          `Test hazırlanamadı. Lütfen tekrar dene.${detail ? ` — ${detail}` : ''}`
+        );
         return;
       }
       const data = (await res.json()) as GenerateResponse;
@@ -162,7 +175,13 @@ export default function TestPage() {
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
-        setErrorMsg('Cevaplar gönderilemedi. Tekrar dene.');
+        const body = await res.json().catch(() => null);
+        const detail = body?.error
+          ? `${body.error}${body.status ? ` (${body.status})` : ''}`
+          : '';
+        setErrorMsg(
+          `Cevaplar gönderilemedi. Tekrar dene.${detail ? ` — ${detail}` : ''}`
+        );
         return;
       }
       const data = (await res.json()) as SubmitResponse;
@@ -422,12 +441,7 @@ function ResultStage({
         <div className="text-gray-500">%{pct} başarı</div>
       </div>
 
-      {result.topic_summary && (
-        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-sm text-blue-900">
-          <span className="font-semibold">En çok zorlandığın konular: </span>
-          {result.topic_summary}
-        </div>
-      )}
+      {renderTopicSummary(result.topic_summary)}
 
       <div className="space-y-3">
         {result.results.map((r) => {
@@ -513,4 +527,53 @@ function ResultStage({
       </div>
     </div>
   );
+}
+
+function renderTopicSummary(summary: SubmitResponse['topic_summary']) {
+  if (!summary) return null;
+
+  const weakest = summary.weakest ?? [];
+  const entries = Object.entries(summary.by_topic ?? {});
+  if (weakest.length === 0 && entries.length === 0) return null;
+
+  return (
+    <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-sm text-blue-900 space-y-3">
+      {weakest.length > 0 && (
+        <div>
+          <span className="font-semibold">En çok zorlandığın konular: </span>
+          {weakest.map(prettifyTopic).join(', ')}
+        </div>
+      )}
+
+      {entries.length > 0 && (
+        <ul className="space-y-2">
+          {entries.map(([code, { correct, total }]) => {
+            const pct = total > 0 ? Math.round((correct / total) * 100) : 0;
+            return (
+              <li key={code} className="space-y-1">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="font-medium">{prettifyTopic(code)}</span>
+                  <span className="text-blue-800/80 text-xs tabular-nums">
+                    {correct}/{total} doğru
+                  </span>
+                </div>
+                <div className="h-2 rounded-full bg-blue-100 overflow-hidden">
+                  <div
+                    className="h-full bg-blue-600"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function prettifyTopic(code: string): string {
+  if (!code) return code;
+  const spaced = code.replace(/_/g, ' ');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
