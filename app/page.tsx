@@ -122,6 +122,12 @@ export default function Home() {
         </div>
         <div className="shrink-0 flex items-center gap-2">
           <Link
+            href="/dashboard"
+            className="text-sm bg-blue-700 hover:bg-blue-800 rounded-full px-3 py-1.5"
+          >
+            📊 Dashboard
+          </Link>
+          <Link
             href="/test"
             className="text-sm bg-blue-700 hover:bg-blue-800 rounded-full px-3 py-1.5"
           >
