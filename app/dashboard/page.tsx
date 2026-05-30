@@ -128,8 +128,16 @@ export default function DashboardPage() {
           );
           return;
         }
-        const json = (await res.json()) as DashboardData;
-        setData(json);
+        const raw = (await res.json()) as
+          | DashboardData
+          | { dashboard_data?: DashboardData };
+        const normalized =
+          (raw && 'dashboard_data' in raw && raw.dashboard_data
+            ? raw.dashboard_data
+            : (raw as DashboardData));
+        console.log('[dashboard] raw response:', raw);
+        console.log('[dashboard] vocabulary:', normalized?.vocabulary);
+        setData(normalized);
       } catch {
         if (active) setErrorMsg('Bağlantı hatası. Tekrar dene.');
       } finally {
@@ -252,8 +260,15 @@ function SummaryCards({ data }: { data: DashboardData }) {
         <div className="text-3xl font-bold text-blue-600">
           {vocab.mastered_words}
         </div>
-        <div className="text-sm text-gray-500">
-          / {vocab.total_words} öğrenildi
+        <div className="text-sm text-gray-500">öğrenildi</div>
+        <div className="mt-2 text-xs text-gray-500 space-y-0.5 tabular-nums">
+          <div>
+            <span className="text-amber-700">Öğreniliyor:</span>{' '}
+            {vocab.learning_words}
+          </div>
+          <div>
+            <span className="text-gray-600">Toplam:</span> {vocab.total_words}
+          </div>
         </div>
         <div className="mt-3 h-2 rounded-full bg-blue-100 overflow-hidden">
           <div
@@ -351,7 +366,7 @@ function GrammarStatus({ topics }: { topics: GrammarTopic[] }) {
           </h3>
         </div>
         <p className="text-xs text-gray-500">
-          Bu konularda en az 10 deneme yapınca güvenilir bir mastery skoru olacak.
+          Bu konularda en az 3 deneme yapınca güvenilir bir mastery skoru olacak.
         </p>
         {groups.yetersiz_veri.length === 0 ? (
           <div className="text-sm text-gray-400">Henüz konu yok</div>

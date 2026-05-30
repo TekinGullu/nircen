@@ -122,12 +122,24 @@ export default function Home() {
           <h1 className="text-xl font-bold">Nircen — İngilizce Öğretmenin</h1>
           <p className="text-sm text-blue-100 truncate">{user?.email}</p>
         </div>
-        <div className="shrink-0 flex items-center gap-2">
+        <div className="shrink-0 flex items-center gap-2 flex-wrap justify-end">
           <Link
             href="/dashboard"
             className="text-sm bg-blue-700 hover:bg-blue-800 rounded-full px-3 py-1.5"
           >
             📊 Dashboard
+          </Link>
+          <Link
+            href="/kelimelerim"
+            className="text-sm bg-blue-700 hover:bg-blue-800 rounded-full px-3 py-1.5"
+          >
+            📚 Kelimelerim
+          </Link>
+          <Link
+            href="/oku"
+            className="text-sm bg-blue-700 hover:bg-blue-800 rounded-full px-3 py-1.5"
+          >
+            📖 Oku
           </Link>
           <Link
             href="/test"
