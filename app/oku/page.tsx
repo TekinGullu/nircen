@@ -1,6 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
@@ -54,6 +60,19 @@ interface StoryResponse {
   story: string;
   highlighted_words: HighlightedWord[];
   questions: Question[];
+}
+
+interface LookupResponse {
+  word_id: number;
+  word: string;
+  base_word: string;
+  meaning_tr: string | null;
+  meaning_en: string | null;
+  example_sentence: string | null;
+  cefr_level: string | null;
+  already_in_list: boolean;
+  status?: 'learning' | 'mastered' | string | null;
+  source: string;
 }
 
 type WordSignalKind =
@@ -126,7 +145,6 @@ export default function OkuPage() {
   const [story, setStory] = useState<StoryResponse | null>(null);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [clickedIds, setClickedIds] = useState<Set<number>>(new Set());
-  const [selectedWord, setSelectedWord] = useState<HighlightedWord | null>(null);
 
   const [generating, setGenerating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -216,7 +234,6 @@ export default function OkuPage() {
       setStory(storyData);
       setAnswers({});
       setClickedIds(new Set());
-      setSelectedWord(null);
       setStage('reading');
     } catch {
       setErrorMsg('Bağlantı hatası. Tekrar dene.');
@@ -276,7 +293,6 @@ export default function OkuPage() {
     setStory(null);
     setAnswers({});
     setClickedIds(new Set());
-    setSelectedWord(null);
     setResult(null);
     setErrorMsg(null);
   }
@@ -331,12 +347,10 @@ export default function OkuPage() {
         {stage === 'reading' && story && (
           <ReadingStage
             story={story}
+            userId={user?.id ?? ''}
             answers={answers}
             setAnswers={setAnswers}
-            clickedIds={clickedIds}
             setClickedIds={setClickedIds}
-            selectedWord={selectedWord}
-            setSelectedWord={setSelectedWord}
             onReset={resetToSetup}
             onSubmit={submitAnswers}
             submitting={submitting}
@@ -344,10 +358,7 @@ export default function OkuPage() {
         )}
 
         {stage === 'result' && result && (
-          <ResultStage
-            result={result}
-            onNewReading={resetToSetup}
-          />
+          <ResultStage result={result} onNewReading={resetToSetup} />
         )}
       </main>
     </div>
@@ -474,25 +485,33 @@ function SetupStage({
   );
 }
 
+interface Anchor {
+  centerX: number;
+  top: number;
+  bottom: number;
+}
+
+interface CardState {
+  word: string;
+  anchor: Anchor;
+  nonce: number;
+}
+
 function ReadingStage({
   story,
+  userId,
   answers,
   setAnswers,
-  clickedIds,
   setClickedIds,
-  selectedWord,
-  setSelectedWord,
   onReset,
   onSubmit,
   submitting,
 }: {
   story: StoryResponse;
+  userId: string;
   answers: Record<number, string>;
   setAnswers: React.Dispatch<React.SetStateAction<Record<number, string>>>;
-  clickedIds: Set<number>;
   setClickedIds: React.Dispatch<React.SetStateAction<Set<number>>>;
-  selectedWord: HighlightedWord | null;
-  setSelectedWord: React.Dispatch<React.SetStateAction<HighlightedWord | null>>;
   onReset: () => void;
   onSubmit: () => void;
   submitting: boolean;
@@ -508,20 +527,75 @@ function ReadingStage({
   ).length;
   const allAnswered = answeredCount >= totalQs;
 
-  function openWord(w: HighlightedWord) {
-    setSelectedWord(w);
-    setClickedIds((prev) => {
-      if (prev.has(w.word_id)) return prev;
-      const next = new Set(prev);
-      next.add(w.word_id);
-      return next;
-    });
+  // Coarse pointer (mobile) → single tap opens; otherwise double-click is
+  // required so accidental clicks don't trigger the card. Resolved on the
+  // client to avoid hydration mismatches.
+  const coarseRef = useRef(false);
+  useEffect(() => {
+    coarseRef.current =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(pointer: coarse)').matches;
+  }, []);
+
+  const [card, setCard] = useState<CardState | null>(null);
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+
+  // Map highlighted-word surfaces → word_id so opening a card on a target/
+  // support word still records the "clicked for help" signal the answer
+  // endpoint expects, without showing any visual distinction in the text.
+  const helpMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const h of story.highlighted_words ?? []) {
+      if (h?.word) {
+        const k = h.word.toLowerCase();
+        if (!m.has(k)) m.set(k, h.word_id);
+      }
+      if (h?.base_word) {
+        const k = h.base_word.toLowerCase();
+        if (!m.has(k)) m.set(k, h.word_id);
+      }
+    }
+    return m;
+  }, [story.highlighted_words]);
+
+  const tokens = useMemo(() => tokenizeText(story.story), [story.story]);
+
+  function openCard(rawWord: string, index: number | null, anchor: Anchor) {
+    const clean = cleanWord(rawWord);
+    if (!clean) return;
+    const helpId = helpMap.get(clean.toLowerCase());
+    if (helpId != null) {
+      setClickedIds((prev) => {
+        if (prev.has(helpId)) return prev;
+        const next = new Set(prev);
+        next.add(helpId);
+        return next;
+      });
+    }
+    setActiveIndex(index);
+    setCard((c) => ({ word: clean, anchor, nonce: (c?.nonce ?? 0) + 1 }));
   }
 
-  const tokens = useMemo(
-    () => tokenizeStory(story.story, story.highlighted_words),
-    [story.story, story.highlighted_words]
-  );
+  function closeCard() {
+    setCard(null);
+    setActiveIndex(null);
+  }
+
+  function handleArticleContextMenu(e: React.MouseEvent) {
+    if (coarseRef.current) return;
+    const selection =
+      typeof window !== 'undefined'
+        ? window.getSelection?.()?.toString() ?? ''
+        : '';
+    if (!cleanWord(selection)) return;
+    e.preventDefault();
+    openCard(selection, null, {
+      centerX: e.clientX,
+      top: e.clientY,
+      bottom: e.clientY,
+    });
+  }
 
   return (
     <div className="space-y-5">
@@ -543,26 +617,49 @@ function ReadingStage({
         </span>
       </div>
 
-      <article className="bg-white rounded-2xl shadow p-5 sm:p-6 text-gray-900 leading-relaxed whitespace-pre-wrap text-[17px]">
+      <article
+        onContextMenu={handleArticleContextMenu}
+        className="bg-white rounded-2xl shadow p-5 sm:p-6 text-gray-900 leading-relaxed whitespace-pre-wrap text-[17px]"
+      >
         {tokens.map((tok, i) => {
           if (tok.type === 'text') return <span key={i}>{tok.value}</span>;
-          const isClicked = clickedIds.has(tok.word.word_id);
+          const active = i === activeIndex;
           return (
-            <button
+            <span
               key={i}
-              type="button"
-              onClick={() => openWord(tok.word)}
-              className={`inline rounded px-0.5 underline decoration-dotted underline-offset-4 transition ${
-                isClicked
-                  ? 'bg-green-100 text-green-800 hover:bg-green-200'
-                  : 'text-blue-600 hover:text-blue-800 hover:bg-blue-50'
+              onClick={(e) => {
+                if (!coarseRef.current) return;
+                const r = (
+                  e.currentTarget as HTMLElement
+                ).getBoundingClientRect();
+                openCard(tok.value, i, {
+                  centerX: r.left + r.width / 2,
+                  top: r.top,
+                  bottom: r.bottom,
+                });
+              }}
+              onDoubleClick={(e) => {
+                if (coarseRef.current) return;
+                openCard(tok.value, i, {
+                  centerX: e.clientX,
+                  top: e.clientY,
+                  bottom: e.clientY,
+                });
+              }}
+              className={`rounded transition-colors ${
+                active ? 'bg-blue-100' : ''
               }`}
             >
               {tok.value}
-            </button>
+            </span>
           );
         })}
       </article>
+
+      <p className="text-xs text-gray-400 -mt-2 px-1">
+        💡 Bir kelimeye dokun (masaüstünde çift tıkla) ya da bir ifade seçip sağ
+        tıkla — anlamını gör ve öğreneceklerine ekle.
+      </p>
 
       <section className="bg-white rounded-2xl shadow p-5 space-y-4">
         <h2 className="font-semibold text-gray-800">📝 Anlama Soruları</h2>
@@ -625,93 +722,265 @@ function ReadingStage({
         </div>
       </section>
 
-      {selectedWord && (
-        <WordModal
-          word={selectedWord}
-          onClose={() => setSelectedWord(null)}
+      {card && (
+        <WordCard
+          key={card.nonce}
+          word={card.word}
+          anchor={card.anchor}
+          userId={userId}
+          onClose={closeCard}
         />
       )}
     </div>
   );
 }
 
-function WordModal({
+function WordCard({
   word,
+  anchor,
+  userId,
   onClose,
 }: {
-  word: HighlightedWord;
+  word: string;
+  anchor: Anchor;
+  userId: string;
   onClose: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const dialogRef = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [data, setData] = useState<LookupResponse | null>(null);
+
+  const [adding, setAdding] = useState(false);
+  const [added, setAdded] = useState(false);
+
+  const [knowing, setKnowing] = useState(false);
+  const [known, setKnown] = useState(false);
+
+  // Lookup (may take 1–2s when the meaning is AI-generated). The card is keyed
+  // by selection, so it mounts fresh each time — no need to reset state here.
   useEffect(() => {
-    const id = requestAnimationFrame(() => setOpen(true));
-    return () => cancelAnimationFrame(id);
-  }, []);
+    let active = true;
+    fetch('/api/vocabulary/lookup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId, word }),
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error('lookup failed');
+        return r.json();
+      })
+      .then((d: LookupResponse) => {
+        if (active) setData(d);
+      })
+      .catch(() => {
+        if (active) setError(true);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [word, userId]);
 
+  // Position next to the anchor, clamped inside the viewport. Re-runs when the
+  // content (and therefore height) changes.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const margin = 8;
+
+    let left = anchor.centerX - rect.width / 2;
+    left = Math.max(margin, Math.min(left, vw - rect.width - margin));
+
+    let top: number;
+    if (vh - anchor.bottom >= rect.height + margin) {
+      top = anchor.bottom + margin;
+    } else if (anchor.top - margin >= rect.height) {
+      top = anchor.top - rect.height - margin;
+    } else {
+      top = Math.max(margin, vh - rect.height - margin);
+    }
+    setPos({ top, left });
+  }, [anchor, loading, error, data, added, adding, known, knowing]);
+
+  // Close on Escape or on any interaction outside the card.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
     }
+    function onDown(e: PointerEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    }
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    const t = setTimeout(() => {
+      document.addEventListener('pointerdown', onDown);
+    }, 0);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onDown);
+      clearTimeout(t);
+    };
   }, [onClose]);
+
+  async function addToList() {
+    if (!data || adding || added || knowing || known) return;
+    setAdding(true);
+    setAdded(true); // optimistic
+    try {
+      const r = await fetch('/api/vocabulary/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, word_id: data.word_id }),
+      });
+      if (!r.ok) throw new Error('add failed');
+      const j = await r.json();
+      if (!j?.success) throw new Error('add failed');
+    } catch {
+      setAdded(false); // revert on error
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function markKnown() {
+    if (!data || knowing || known || adding || added) return;
+    setKnowing(true);
+    setKnown(true); // optimistic
+    try {
+      const r = await fetch('/api/vocabulary/mark-known', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, word_id: data.word_id }),
+      });
+      if (!r.ok) throw new Error('mark-known failed');
+      const j = await r.json();
+      if (!j?.success) throw new Error('mark-known failed');
+    } catch {
+      setKnown(false); // revert on error
+    } finally {
+      setKnowing(false);
+    }
+  }
+
+  const displayWord = data?.word || word;
+
+  // Resolve which (if any) passive status label to show instead of the buttons.
+  // Local optimistic actions win; otherwise fall back to the looked-up status.
+  let statusLabel: string | null = null;
+  if (known) statusLabel = 'Biliniyor ✓';
+  else if (added) statusLabel = 'Eklendi ✓';
+  else if (data?.already_in_list) {
+    statusLabel = data.status === 'mastered' ? 'Biliniyor ✓' : 'Listende ✓';
+  }
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-opacity duration-150 ${
-        open ? 'bg-black/50 opacity-100' : 'bg-black/0 opacity-0'
-      }`}
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+      ref={ref}
+      role="dialog"
+      aria-label="Kelime kartı"
+      style={{
+        top: pos?.top ?? -9999,
+        left: pos?.left ?? -9999,
+        visibility: pos ? 'visible' : 'hidden',
       }}
+      className="fixed z-50 w-72 max-w-[calc(100vw-16px)] bg-white rounded-xl shadow-xl border border-gray-200 p-4"
     >
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        className={`w-full max-w-md bg-white rounded-2xl shadow-xl p-5 space-y-3 transition-all duration-150 ${
-          open ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
-        }`}
-      >
-        <div>
-          <div className="text-2xl font-bold text-gray-900">{word.word}</div>
-          {word.base_word && word.base_word.toLowerCase() !== word.word.toLowerCase() && (
-            <div className="text-sm text-gray-500">{word.base_word}</div>
-          )}
+      {loading && (
+        <div className="flex items-center gap-2 text-sm text-gray-500 py-1">
+          <Spinner className="border-gray-300 border-t-gray-600" />
+          Aranıyor...
         </div>
+      )}
 
-        {word.meaning_tr && (
-          <div className="text-lg font-medium text-red-700">
-            {word.meaning_tr}
-          </div>
-        )}
-        {word.meaning_en && (
-          <div className="text-sm italic text-gray-600">{word.meaning_en}</div>
-        )}
+      {!loading && error && (
+        <div className="text-sm text-gray-500 py-1">
+          &quot;{word}&quot; için anlam bulunamadı.
+        </div>
+      )}
 
-        {word.example_sentence && (
-          <div className="space-y-1 pt-1">
-            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-              Bu hikayedeki kullanım
+      {!loading && !error && data && (
+        <div className="space-y-2">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-lg font-bold text-gray-900 break-words">
+                {displayWord}
+              </div>
+              {data.base_word &&
+                data.base_word.toLowerCase() !==
+                  displayWord.toLowerCase() && (
+                  <div className="text-xs text-gray-500">{data.base_word}</div>
+                )}
             </div>
-            <blockquote className="border-l-4 border-blue-400 pl-3 italic text-gray-700">
-              {word.example_sentence}
-            </blockquote>
+            {data.cefr_level && (
+              <span className="shrink-0 text-[11px] font-semibold bg-blue-100 text-blue-700 rounded-full px-2 py-0.5">
+                {data.cefr_level}
+              </span>
+            )}
           </div>
-        )}
 
-        <div className="pt-2 flex justify-end">
-          <button
-            type="button"
-            onClick={onClose}
-            className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 py-2 font-medium"
-          >
-            Kapat
-          </button>
+          {data.meaning_tr && (
+            <div className="text-base font-medium text-red-700">
+              {data.meaning_tr}
+            </div>
+          )}
+          {data.meaning_en && (
+            <div className="text-xs italic text-gray-500">{data.meaning_en}</div>
+          )}
+
+          {data.example_sentence && (
+            <blockquote className="border-l-4 border-blue-300 pl-2 text-sm italic text-gray-600">
+              {data.example_sentence}
+            </blockquote>
+          )}
+
+          <div className="pt-1">
+            {statusLabel ? (
+              <div className="text-sm font-semibold text-green-700">
+                {statusLabel}
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row gap-2">
+                <button
+                  type="button"
+                  onClick={addToList}
+                  disabled={adding}
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {adding ? (
+                    <>
+                      <Spinner /> Ekleniyor...
+                    </>
+                  ) : (
+                    <>+ Öğreneceklerime Ekle</>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={markKnown}
+                  disabled={knowing}
+                  className="flex-1 border border-green-600 text-green-700 hover:bg-green-50 rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {knowing ? (
+                    <>
+                      <Spinner className="border-green-300 border-t-green-600" />{' '}
+                      Kaydediliyor...
+                    </>
+                  ) : (
+                    <>✓ Biliyorum</>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -891,64 +1160,40 @@ function SignalBadge({ signal }: { signal: WordSignalKind }) {
   );
 }
 
-function Spinner() {
+function Spinner({
+  className = 'border-white/40 border-t-white',
+}: {
+  className?: string;
+}) {
   return (
     <span
       aria-hidden
-      className="inline-block w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"
+      className={`inline-block w-4 h-4 border-2 rounded-full animate-spin ${className}`}
     />
   );
 }
 
 type Token =
   | { type: 'text'; value: string }
-  | { type: 'word'; value: string; word: HighlightedWord };
+  | { type: 'word'; value: string };
 
-function tokenizeStory(text: string, highlights: HighlightedWord[]): Token[] {
+// Words keep internal apostrophes/hyphens (don't, well-known) but leading/
+// trailing punctuation falls into the surrounding text tokens, so each word
+// span already carries a clean lookup term.
+const WORD_RE = /[\p{L}\p{M}\p{N}]+(?:['’\-‐][\p{L}\p{M}\p{N}]+)*/gu;
+
+function tokenizeText(text: string): Token[] {
   if (!text) return [];
-  if (!highlights || highlights.length === 0) {
-    return [{ type: 'text', value: text }];
-  }
-
-  const surfaceToHighlight = new Map<string, HighlightedWord>();
-  for (const h of highlights) {
-    if (h?.word) {
-      const k = h.word.toLowerCase();
-      if (!surfaceToHighlight.has(k)) surfaceToHighlight.set(k, h);
-    }
-    if (h?.base_word) {
-      const k = h.base_word.toLowerCase();
-      if (!surfaceToHighlight.has(k)) surfaceToHighlight.set(k, h);
-    }
-  }
-
-  const surfaces = Array.from(surfaceToHighlight.keys())
-    .filter((s) => s.length > 0)
-    .sort((a, b) => b.length - a.length);
-
-  if (surfaces.length === 0) return [{ type: 'text', value: text }];
-
-  const pattern = new RegExp(
-    `\\b(${surfaces.map(escapeRegex).join('|')})\\b`,
-    'gi'
-  );
-
   const tokens: Token[] = [];
   let lastIdx = 0;
   let m: RegExpExecArray | null;
-  while ((m = pattern.exec(text)) !== null) {
+  WORD_RE.lastIndex = 0;
+  while ((m = WORD_RE.exec(text)) !== null) {
     if (m.index > lastIdx) {
       tokens.push({ type: 'text', value: text.slice(lastIdx, m.index) });
     }
-    const matched = m[0];
-    const hw = surfaceToHighlight.get(matched.toLowerCase());
-    if (hw) {
-      tokens.push({ type: 'word', value: matched, word: hw });
-    } else {
-      tokens.push({ type: 'text', value: matched });
-    }
-    lastIdx = m.index + matched.length;
-    if (matched.length === 0) pattern.lastIndex++;
+    tokens.push({ type: 'word', value: m[0] });
+    lastIdx = m.index + m[0].length;
   }
   if (lastIdx < text.length) {
     tokens.push({ type: 'text', value: text.slice(lastIdx) });
@@ -956,6 +1201,9 @@ function tokenizeStory(text: string, highlights: HighlightedWord[]): Token[] {
   return tokens;
 }
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const TRIM_RE =
+  /^[\s.,!?"'’“”:;()[\]{}\-–—…«»]+|[\s.,!?"'’“”:;()[\]{}\-–—…«»]+$/g;
+
+function cleanWord(s: string): string {
+  return (s ?? '').replace(TRIM_RE, '').trim();
 }
